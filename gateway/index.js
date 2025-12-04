@@ -215,9 +215,11 @@ async function scoreWithML(ctx) {
   }
 }
 
-// ---------------- RBAC TABLE -------------------
+// ---------------- RBAC TABLE (DYNAMIC) -------------------
 
-const RBAC = {
+// RBAC is now mutable so it can be edited via API.
+// Default values = same as before.
+let RBAC = {
   guest: {
     allow: ["/info"],
     deny: ["/admin", "/admin/secret", "/admin/*"],
@@ -231,6 +233,52 @@ const RBAC = {
     deny: [],
   },
 };
+
+// Helper: normalize the RBAC object a bit (defensive)
+function normalizeRBAC(rbac) {
+  const result = {};
+  for (const [role, rules] of Object.entries(rbac || {})) {
+    result[role] = {
+      allow: Array.isArray(rules.allow) ? rules.allow : [],
+      deny: Array.isArray(rules.deny) ? rules.deny : [],
+    };
+  }
+  return result;
+}
+
+// ADMIN API: get current RBAC config
+app.get("/admin/rbac", (req, res) => {
+  res.json(RBAC);
+});
+
+// ADMIN API: replace RBAC config
+// Expected body: { rbac: { roleName: { allow: [...], deny: [...] }, ... } }
+app.post("/admin/rbac", (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.rbac || typeof body.rbac !== "object") {
+      return res.status(400).json({ error: "Missing or invalid 'rbac' field" });
+    }
+
+    const newRBAC = normalizeRBAC(body.rbac);
+
+    // Basic sanity check: must have at least guest
+    if (!newRBAC.guest) {
+      return res.status(400).json({ error: "RBAC must include a 'guest' role" });
+    }
+
+    RBAC = newRBAC;
+    console.log("[RBAC] Updated RBAC configuration:", RBAC);
+
+    return res.json({ message: "RBAC updated successfully", rbac: RBAC });
+  } catch (err) {
+    console.error("Failed to update RBAC:", err);
+    return res.status(500).json({
+      error: "Failed to update RBAC",
+      details: err.message,
+    });
+  }
+});
 
 function checkRBAC(role, pathReq) {
   const rules = RBAC[role] || RBAC["guest"];
@@ -634,9 +682,9 @@ app.use("/fw", async (req, res) => {
     auditLogs.push(allowedEntry);
     appendToAuditChain(allowedEntry);
 
-    res.set("x-ngfw-rule-risk", ruleDecision.risk.toString());
-    res.set("x-ngfw-ml-risk", ml.ml_risk.toString());
-    res.set("x-ngfw-final-risk", finalRisk.toString());
+    res.set("x-ngfw-rule-risk", String(ruleDecision.risk));
+    res.set("x-ngfw-ml-risk", String(ml.ml_risk));
+    res.set("x-ngfw-final-risk", String(finalRisk));
     res.set("x-ngfw-label", finalLabel);
 
     return res.status(response.status).json(response.data);
@@ -663,4 +711,5 @@ app.use("/fw", async (req, res) => {
 
 app.listen(4000, () => {
   console.log("AI-NGFW Gateway running at http://localhost:4000");
+  console.log("RBAC admin endpoint: GET/POST http://localhost:4000/admin/rbac");
 });
