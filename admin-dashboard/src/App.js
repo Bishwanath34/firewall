@@ -1,130 +1,82 @@
-import React, { useEffect, useState } from "react";
-import axios from "axios";
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import {
-  AppBar,
-  Toolbar,
-  Typography,
-  Container,
-  Box,
-  Paper,
-  Button,
-  Chip,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  ToggleButton,
-  ToggleButtonGroup,
-} from "@mui/material";
+  AppBar, Toolbar, Typography, Container, Box, Paper, Button, Chip,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  ToggleButton, ToggleButtonGroup,
+} from '@mui/material';
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  BarChart,
-  Bar,
-  ResponsiveContainer,
-} from "recharts";
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  BarChart, Bar, ResponsiveContainer,
+} from 'recharts';
 
-const GATEWAY_URL = "http://localhost:4000";
+const TLS_GATEWAY = 'https://localhost:4001';
 
 function App() {
   const [logs, setLogs] = useState([]);
-  const [filter, setFilter] = useState("all");
-  const [chainOK, setChainOK] = useState(true);
+  const [filter, setFilter] = useState('all');
 
-  // ---------- LOAD LOGS FROM GATEWAY ----------
-
+  // Load logs via HTTPS (browser needs cert trust)
   const loadLogs = async () => {
     try {
-      const res = await axios.get(`${GATEWAY_URL}/admin/logs`);
-      setLogs(res.data || []);
+      const res = await axios.get(`${TLS_GATEWAY}/admin/logs`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      setLogs(res.data);
     } catch (err) {
-      console.error("Error fetching logs", err);
-      alert("Could not load logs from gateway.");
+      console.error('Logs error:', err.message);
     }
   };
 
   useEffect(() => {
     loadLogs();
-    // refresh every 1s to make the feed feel "live"
     const id = setInterval(loadLogs, 1000);
     return () => clearInterval(id);
   }, []);
 
-  // ---------- CHAIN INTEGRITY STATUS ----------
-
-  const checkChainStatus = async () => {
+  // TLS Simulator (direct HTTPS calls)
+  const simulateRequest = async (path, userId, role) => {
     try {
-      const res = await axios.get(`${GATEWAY_URL}/verify-chain`);
-      setChainOK(!!res.data.valid);
-    } catch (err) {
-      console.error("Error checking chain status", err);
-      setChainOK(false);
-    }
-  };
-
-  useEffect(() => {
-    checkChainStatus();
-    const id = setInterval(checkChainStatus, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  // ---------- TRAFFIC SIMULATOR HELPERS ----------
-
-  const simulateRequest = async ({ path, userId, role }) => {
-    try {
-      console.log("Simulating", { path, userId, role });
-
-      const res = await axios.get(`${GATEWAY_URL}/fw${path}`, {
-        headers: {
-          "x-user-id": userId,
-          "x-user-role": role,
+      console.log('TLS simulation:', path, userId, role);
+      await axios.get(`${TLS_GATEWAY}${path}`, {
+        headers: { 
+          'x-user-id': userId, 
+          'x-user-role': role 
         },
-        // accept all HTTP codes (200, 403, 500...) as non-errors
-        validateStatus: () => true,
+        timeout: 5000
       });
-
-      console.log("Simulation response status:", res.status);
       await loadLogs();
     } catch (err) {
-      if (!err.response) {
-        alert(
-          "Simulation request failed. Check that gateway + backend are running."
-        );
-      }
-      console.error("Simulation error:", err);
+      console.log('TLS sim result:', err.response?.status || err.message);
+      await loadLogs();
     }
   };
 
-  const simulateNormalUserInfo = () =>
-    simulateRequest({ path: "/info", userId: "alice", role: "user" });
+  const simulateNormalUserInfo = () => simulateRequest('/fw/info', 'alice', 'user');
+  const simulateSuspiciousGuestAdmin = () => simulateRequest('/fw/admin/secret', 'anonymous', 'guest');
+  const simulateGuestAdminRBAC = () => simulateRequest('/fw/admin/secret', 'guest123', 'guest');
 
-  const simulateSuspiciousGuestAdmin = () =>
-    simulateRequest({
-      path: "/admin/secret",
-      userId: "anonymous",
-      role: "guest",
-    });
+  // Filtered logs & stats (unchanged logic)
+  const filteredLogs = logs.filter(entry => {
+    if (filter === 'all') return true;
+    if (filter === 'allowed') return entry.decision?.allow !== false;
+    if (filter === 'blocked') return entry.decision?.allow === false;
+    return true;
+  }).sort((a, b) => new Date(b.time) - new Date(a.time));
 
-  const simulateGuestAdminRBAC = () =>
-    simulateRequest({
-      path: "/admin/secret",
-      userId: "guest123",
-      role: "guest",
-    });
+  const totalRequests = logs.length;
+  const allowedCount = logs.filter(e => e.decision?.allow !== false).length;
+  const highRiskCount = logs.filter(e => 
+    e.decision?.label === 'high_risk' || 
+    (e.decision?.risk || 0) >= 0.7 ||
+    (e.tls?.risk || 0) > 0.5
+  ).length;
 
-  // ---------- EXPORT LOGS (JSON / CSV) ----------
-
+  // export logs
   const handleExport = async (format) => {
     try {
       const res = await axios.get(
-        `${GATEWAY_URL}/admin/logs/export?format=${format}`,
+        `${TLS_GATEWAY}/admin/logs/export?format=${format}`,
         {
           responseType: "blob", // get file as Blob
         }
@@ -147,382 +99,170 @@ function App() {
     }
   };
 
-  // ---------- FILTERED LOGS + STATS ----------
-
-  const filteredLogs = logs.filter((entry) => {
-    if (filter === "all") return true;
-    if (filter === "allowed") return entry.statusCode && entry.statusCode < 400;
-    if (filter === "blocked") return entry.statusCode && entry.statusCode >= 400;
-    return true;
-  });
-
-  // NEWEST FIRST for table + live feed
-  const displayLogs = [...filteredLogs].sort(
-    (a, b) => new Date(b.time) - new Date(a.time)
-  );
-
-  const totalRequests = logs.length;
-  const allowedCount = logs.filter(
-    (e) => e.statusCode && e.statusCode < 400
-  ).length;
-  const highRiskCount = logs.filter(
-    (e) =>
-      e.decision &&
-      (e.decision.label === "high_risk" || e.decision.label === "rbac_block")
-  ).length;
-
-  // ---------- PER-USER SUMMARY ----------
-
+  // User summary
   const userSummaryMap = {};
-
-  logs.forEach((e) => {
-    const uid = e.context?.userId || "anonymous";
-    if (!userSummaryMap[uid]) {
-      userSummaryMap[uid] = { total: 0, blocked: 0, highRisk: 0 };
-    }
+  logs.forEach(e => {
+    const uid = e.context?.userId || 'anonymous';
+    if (!userSummaryMap[uid]) userSummaryMap[uid] = { total: 0, blocked: 0, highRisk: 0 };
     userSummaryMap[uid].total += 1;
-
-    if (e.statusCode && e.statusCode >= 400) {
-      userSummaryMap[uid].blocked += 1;
-    }
-
-    if (
-      e.decision &&
-      (e.decision.label === "high_risk" ||
-        e.decision.label === "rbac_block")
-    ) {
-      userSummaryMap[uid].highRisk += 1;
-    }
+    if (e.decision?.allow === false) userSummaryMap[uid].blocked += 1;
+    if (e.decision?.label === 'high_risk' || (e.tls?.risk || 0) > 0.5) userSummaryMap[uid].highRisk += 1;
   });
-
   const userSummary = Object.entries(userSummaryMap).map(([userId, stats]) => ({
-    userId,
-    ...stats,
+    userId, ...stats
   }));
 
-  // ---------- HELPERS ----------
-
+  // Helpers
   const formatTime = (iso) => {
-    if (!iso) return "-";
-    try {
-      return new Date(iso).toLocaleTimeString();
-    } catch {
-      return iso;
-    }
+    if (!iso) return '-';
+    try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
   };
 
   const shortPath = (p) => {
-    if (!p) return "/";
-    if (p.length > 30) return p.slice(0, 27) + "...";
-    return p;
+    if (!p) return '';
+    if (p.length < 30) return p;
+    return p.slice(0, 27) + '...';
   };
 
-  // ---------- ANALYTICS DATA (for charts) ----------
+  const displayLogs = filteredLogs.slice(0, 50);
 
-  // Sort logs by time ASC for timeline
-  const logsSortedByTime = [...logs].sort(
-    (a, b) => new Date(a.time) - new Date(b.time)
-  );
+  // Chart data
+  const logsSortedByTime = [...logs].sort((a, b) => new Date(a.time) - new Date(b.time));
+  const timeSeriesData = logsSortedByTime.map((e, idx) => ({
+    index: idx + 1,
+    timeLabel: formatTime(e.time),
+    risk: e.decision?.risk ?? 0,
+    tlsRisk: e.tls?.risk ?? 0,
+    allowed: e.decision?.allow ? 1 : 0,
+  }));
 
-  const timeSeriesData = logsSortedByTime.map((e, idx) => {
-    const risk = e.decision?.risk ?? 0;
-    const isAllowed =
-      e.statusCode && e.statusCode < 400 ? 1 : 0;
-    const isBlocked =
-      e.statusCode && e.statusCode >= 400 ? 1 : 0;
-
-    return {
-      index: idx + 1,
-      timeLabel: formatTime(e.time),
-      risk,
-      allowed: isAllowed,
-      blocked: isBlocked,
-    };
-  });
-
-  // Aggregate per-path stats
   const pathMap = {};
-  logs.forEach((e) => {
-    const p = e.context?.path || "/";
-    if (!pathMap[p]) {
-      pathMap[p] = { path: p, total: 0, allowed: 0, blocked: 0 };
-    }
+  logs.forEach(e => {
+    const p = e.context?.path || e.targetPath || '';
+    if (!pathMap[p]) pathMap[p] = { path: p, total: 0, allowed: 0, blocked: 0 };
     pathMap[p].total += 1;
-    if (e.statusCode && e.statusCode < 400) {
-      pathMap[p].allowed += 1;
-    } else if (e.statusCode && e.statusCode >= 400) {
-      pathMap[p].blocked += 1;
-    }
+    if (e.decision?.allow !== false) pathMap[p].allowed += 1;
+    else pathMap[p].blocked += 1;
   });
   const pathStats = Object.values(pathMap);
-
-  // ---------- UI ----------
 
   return (
     <>
       <AppBar position="static" color="primary">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            AI–NGFW Dashboard
+            AI-NGFW Dashboard (TLS-Only)
+          </Typography>
+          <Typography variant="body2" color="inherit">
+            https://localhost:4001
           </Typography>
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-        {/* Stats cards */}
-        <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
-          <Paper sx={{ flex: 1, p: 2, background: "#111827", color: "white" }}>
+      <Container maxWidth="lg" sx={{ mt: 4 }}>
+        {/* Stats */}
+        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
+          <Paper sx={{ flex: 1, p: 2, minWidth: 200, background: '#111827', color: 'white' }}>
             <Typography variant="subtitle2">Total Requests</Typography>
             <Typography variant="h4">{totalRequests}</Typography>
           </Paper>
-          <Paper sx={{ flex: 1, p: 2, background: "#065f46", color: "white" }}>
+          <Paper sx={{ flex: 1, p: 2, minWidth: 200, background: '#065f46', color: 'white' }}>
             <Typography variant="subtitle2">Allowed</Typography>
             <Typography variant="h4">{allowedCount}</Typography>
           </Paper>
-          <Paper sx={{ flex: 1, p: 2, background: "#7f1d1d", color: "white" }}>
-            <Typography variant="subtitle2">High-Risk / RBAC Blocks</Typography>
+          <Paper sx={{ flex: 1, p: 2, minWidth: 200, background: '#7f1d1d', color: 'white' }}>
+            <Typography variant="subtitle2">TLS Blocks</Typography>
             <Typography variant="h4">{highRiskCount}</Typography>
           </Paper>
-          <Paper
-            sx={{
-              flex: 1,
-              p: 2,
-              background: chainOK ? "#064e3b" : "#b91c1c",
-              color: "white",
-            }}
-          >
-            <Typography variant="subtitle2">Log Integrity</Typography>
-            <Typography variant="h4">
-              {chainOK ? "Verified" : "TAMPERED!"}
-            </Typography>
-          </Paper>
         </Box>
 
-        {/* ANALYTICS: Risk over time + Requests per path */}
-        <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
-          {/* Risk over time */}
-          <Paper
-            sx={{
-              flex: 1,
-              p: 2,
-              minWidth: 300,
-              background: "#020617",
-              color: "white",
-            }}
-          >
-            <Typography variant="h6" gutterBottom>
-              Risk Over Time
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 1, color: "#9ca3af" }}>
-              Shows how the combined risk score changes across recent requests.
-            </Typography>
+        {/* Charts */}
+        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
+          <Paper sx={{ flex: 1, p: 2, minWidth: 400, background: '#020617', color: 'white' }}>
+            <Typography variant="h6" gutterBottom>TLS Risk Trends</Typography>
             {timeSeriesData.length === 0 ? (
-              <Typography variant="body2" sx={{ color: "#6b7280" }}>
-                No data yet. Generate some traffic to see the risk trend.
-              </Typography>
+              <Typography variant="body2" sx={{ color: '#6b7280' }}>No data yet</Typography>
             ) : (
-              <Box sx={{ width: "100%", height: 260 }}>
-                <ResponsiveContainer>
-                  <LineChart data={timeSeriesData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="timeLabel" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="risk"
-                      name="Final Risk"
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </Box>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={timeSeriesData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="timeLabel" angle={-45} height={60} />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="risk" name="Risk" stroke="#3b82f6" />
+                  <Line type="monotone" dataKey="tlsRisk" name="TLS Risk" stroke="#f59e0b" strokeWidth={3} />
+                </LineChart>
+              </ResponsiveContainer>
             )}
           </Paper>
-
-          {/* Requests per path */}
-          <Paper
-            sx={{
-              flex: 1,
-              p: 2,
-              minWidth: 300,
-              background: "#020617",
-              color: "white",
-            }}
-          >
-            <Typography variant="h6" gutterBottom>
-              Requests per Path
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 1, color: "#9ca3af" }}>
-              Compare how many requests were allowed vs blocked for each path.
-            </Typography>
+          <Paper sx={{ flex: 1, p: 2, minWidth: 400, background: '#020617', color: 'white' }}>
+            <Typography variant="h6" gutterBottom>Path Analysis</Typography>
             {pathStats.length === 0 ? (
-              <Typography variant="body2" sx={{ color: "#6b7280" }}>
-                No data yet. Generate some traffic to see per-path stats.
-              </Typography>
+              <Typography variant="body2" sx={{ color: '#6b7280' }}>No data</Typography>
             ) : (
-              <Box sx={{ width: "100%", height: 260 }}>
-                <ResponsiveContainer>
-                  <BarChart data={pathStats}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="path" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="allowed" name="Allowed" />
-                    <Bar dataKey="blocked" name="Blocked" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </Box>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={pathStats.slice(0, 10)}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="path" angle={-45} height={60} />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="allowed" fill="#10b981" />
+                  <Bar dataKey="blocked" fill="#ef4444" />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </Paper>
         </Box>
 
-        {/* TOP ROW: Live Feed + Traffic Simulator */}
-        <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
-          {/* Live Traffic Feed */}
-          <Paper
-            sx={{
-              flex: 2,
-              p: 2,
-              background: "#020617",
-              color: "white",
-              fontFamily: "monospace",
-            }}
-          >
-            <Typography variant="h6" gutterBottom>
-              Live Traffic Feed
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 1, color: "#9ca3af" }}>
-              Newest events at the top. Use the simulator or hit the API to see
-              real-time firewall decisions.
-            </Typography>
-
-            <Box
-              sx={{
-                mt: 1,
-                maxHeight: 200,
-                overflowY: "auto",
-                borderRadius: 1,
-                border: "1px solid #1f2937",
-                p: 1,
-                background: "#020617",
-              }}
-            >
+        {/* Live Feed + Simulator */}
+        <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
+          <Paper sx={{ flex: 2, p: 2, background: '#020617', color: 'white', fontFamily: 'monospace' }}>
+            <Typography variant="h6" gutterBottom>Live TLS Traffic</Typography>
+            <Box sx={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #1f2937', p: 1, borderRadius: 1 }}>
               {displayLogs.slice(0, 10).map((entry, idx) => {
-                const isAllowed =
-                  entry.statusCode && entry.statusCode < 400;
-                const finalLabel = entry.decision?.label || "normal";
-                const mlLabel = entry.decision?.ml_label || "normal";
-
+                const isAllowed = entry.decision?.allow !== false;
                 return (
-                  <Box
-                    key={idx}
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      mb: 0.5,
-                      fontSize: 12,
-                    }}
-                  >
-                    <span style={{ color: "#6b7280" }}>
-                      [{formatTime(entry.time)}]
+                  <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 0.5, fontSize: 12 }}>
+                    <span style={{ color: '#6b7280' }}>{formatTime(entry.time)}</span>
+                    <span>{entry.context?.method} {shortPath(entry.targetPath)}</span>
+                    <span>user: {entry.context?.userId}, role: {entry.context?.role}</span>
+                    <span style={{ color: isAllowed ? '#4ade80' : '#f87171' }}>
+                      {isAllowed ? 'ALLOWED' : 'BLOCKED'}
                     </span>
-                    <span>
-                      {entry.context?.method || "GET"}{" "}
-                      {shortPath(entry.context?.path)}
-                    </span>
-                    <span style={{ color: "#9ca3af" }}>
-                      (user: {entry.context?.userId || "?"},{" "}
-                      role: {entry.context?.role || "?"})
-                    </span>
-                    <span>
-                      {isAllowed ? (
-                        <span style={{ color: "#4ade80" }}>→ ALLOWED</span>
-                      ) : (
-                        <span style={{ color: "#f87171" }}>→ BLOCKED</span>
-                      )}
-                    </span>
-                    <span style={{ color: "#e5e7eb" }}>
-                      [{finalLabel} / ML: {mlLabel}]
-                    </span>
+                    {entry.tls?.risk > 0 && (
+                      <Chip label={`TLS:${entry.tls.risk.toFixed(1)}`} size="small" color="warning" />
+                    )}
                   </Box>
                 );
               })}
-
-              {displayLogs.length === 0 && (
-                <Typography variant="body2" sx={{ color: "#6b7280" }}>
-                  No traffic yet. Use the simulator buttons on the right to
-                  generate some live events.
-                </Typography>
-              )}
+              {displayLogs.length === 0 && <Typography sx={{ color: '#6b7280' }}>No traffic</Typography>}
             </Box>
           </Paper>
 
-          {/* Traffic Simulator */}
-          <Paper
-            sx={{
-              flex: 1,
-              p: 2,
-              background: "#020617",
-              color: "white",
-              minWidth: 260,
-            }}
-          >
-            <Typography variant="h6" gutterBottom>
-              Traffic Simulator
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 2, color: "#9ca3af" }}>
-              Use these buttons during the presentation to generate live traffic
-              and show how the firewall reacts.
-            </Typography>
-
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-              <Button
-                variant="contained"
-                color="success"
-                onClick={simulateNormalUserInfo}
-              >
-                NORMAL USER → /INFO (ALLOWED)
+          <Paper sx={{ flex: 1, p: 2, background: '#020617', color: 'white', minWidth: 260 }}>
+            <Typography variant="h6" gutterBottom>TLS Simulator</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Button fullWidth variant="contained" color="success" onClick={simulateNormalUserInfo}>
+                ✅ Normal /info
               </Button>
-
-              <Button
-                variant="contained"
-                color="warning"
-                onClick={simulateSuspiciousGuestAdmin}
-              >
-                SUSPICIOUS GUEST → /ADMIN/SECRET (HIGH RISK BLOCK)
+              <Button fullWidth variant="contained" color="warning" onClick={simulateSuspiciousGuestAdmin}>
+                ⚠️ Guest /admin
               </Button>
-
-              <Button
-                variant="contained"
-                color="error"
-                onClick={simulateGuestAdminRBAC}
-              >
-                GUEST → /ADMIN/SECRET (RBAC BLOCK)
+              <Button fullWidth variant="contained" color="error" onClick={simulateGuestAdminRBAC}>
+                ❌ RBAC Block
               </Button>
             </Box>
           </Paper>
         </Box>
 
-        {/* Logs table */}
-        <Paper sx={{ p: 2, background: "#020617" }}>
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              mb: 2,
-              gap: 2,
-            }}
-          >
-            <Typography variant="h6" color="white">
-              Firewall Traffic Logs
-            </Typography>
-
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+        {/* Tables */}
+        <Paper sx={{ p: 2, background: '#020617' }}>
+          <Typography variant="h6" color="white" sx={{ mb: 2 }}>
+            TLS Firewall Logs ({filteredLogs.length})
+          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
               {/* Export buttons */}
               <Button
                 variant="outlined"
@@ -598,156 +338,44 @@ function App() {
                 </ToggleButton>
               </ToggleButtonGroup>
             </Box>
-          </Box>
-
-          <TableContainer sx={{ maxHeight: 420 }}>
-            <Table stickyHeader size="small">
+          <ToggleButtonGroup value={filter} exclusive onChange={(_, v) => v && setFilter(v)} size="small">
+            <ToggleButton value="all">ALL</ToggleButton>
+            <ToggleButton value="allowed">ALLOWED</ToggleButton>
+            <ToggleButton value="blocked">BLOCKED</ToggleButton>
+          </ToggleButtonGroup>
+          <TableContainer sx={{ maxHeight: 400, mt: 2 }}>
+            <Table stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Time
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Path
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    User
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Role
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Risk (Final)
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    ML Label
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Decision
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Status
-                  </TableCell>
-                </TableRow>
-              </TableHead>
-
-              <TableBody>
-                {displayLogs.map((entry, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell sx={{ color: "white" }}>{entry.time}</TableCell>
-                    <TableCell sx={{ color: "white" }}>
-                      {entry.context?.path}
-                    </TableCell>
-                    <TableCell sx={{ color: "white" }}>
-                      {entry.context?.userId}
-                    </TableCell>
-                    <TableCell sx={{ color: "white" }}>
-                      {entry.context?.role}
-                    </TableCell>
-
-                    {/* Final combined risk label */}
-                    <TableCell sx={{ color: "white" }}>
-                      <Chip
-                        label={entry.decision?.label || "normal"}
-                        size="small"
-                        color={
-                          entry.decision?.label === "high_risk" ||
-                          entry.decision?.label === "rbac_block"
-                            ? "error"
-                            : entry.decision?.label === "medium_risk"
-                            ? "warning"
-                            : "success"
-                        }
-                      />
-                    </TableCell>
-
-                    {/* ML label from model */}
-                    <TableCell sx={{ color: "white" }}>
-                      <Chip
-                        label={entry.decision?.ml_label || "normal"}
-                        size="small"
-                        variant="outlined"
-                        color={
-                          entry.decision?.ml_label === "high_risk"
-                            ? "error"
-                            : entry.decision?.ml_label === "medium_risk"
-                            ? "warning"
-                            : "success"
-                        }
-                      />
-                    </TableCell>
-
-                    {/* Allowed / Blocked */}
-                    <TableCell sx={{ color: "white" }}>
-                      <Chip
-                        label={
-                          entry.statusCode && entry.statusCode < 400
-                            ? "Allowed"
-                            : "Blocked"
-                        }
-                        size="small"
-                        color={
-                          entry.statusCode && entry.statusCode < 400
-                            ? "success"
-                            : "error"
-                        }
-                      />
-                    </TableCell>
-
-                    {/* Status code */}
-                    <TableCell sx={{ color: "white" }}>
-                      {entry.statusCode}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-
-        {/* PER-USER RISK SUMMARY */}
-        <Paper sx={{ p: 2, background: "#020617", mt: 3 }}>
-          <Typography variant="h6" color="white" sx={{ mb: 2 }}>
-            Per-User Risk Summary
-          </Typography>
-          <TableContainer sx={{ maxHeight: 260 }}>
-            <Table stickyHeader size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    User
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Total Requests
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    Blocked
-                  </TableCell>
-                  <TableCell sx={{ color: "white", background: "#020617" }}>
-                    High-Risk / RBAC Blocks
-                  </TableCell>
+                  <TableCell sx={{ color: 'white', background: '#111827' }}>Time</TableCell>
+                  <TableCell sx={{ color: 'white', background: '#111827' }}>Path</TableCell>
+                  <TableCell sx={{ color: 'white', background: '#111827' }}>User</TableCell>
+                  <TableCell sx={{ color: 'white', background: '#111827' }}>Risk</TableCell>
+                  <TableCell sx={{ color: 'white', background: '#111827' }}>TLS</TableCell>
+                  <TableCell sx={{ color: 'white', background: '#111827' }}>Decision</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {userSummary.map((u) => (
-                  <TableRow key={u.userId}>
-                    <TableCell sx={{ color: "white" }}>{u.userId}</TableCell>
-                    <TableCell sx={{ color: "white" }}>{u.total}</TableCell>
-                    <TableCell sx={{ color: "white" }}>{u.blocked}</TableCell>
-                    <TableCell sx={{ color: "white" }}>{u.highRisk}</TableCell>
-                  </TableRow>
-                ))}
-                {userSummary.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      sx={{ color: "white", textAlign: "center" }}
-                    >
-                      No data yet. Generate some traffic to see user risk
-                      summary.
+                {filteredLogs.map((entry, idx) => (
+                  <TableRow key={idx} hover>
+                    <TableCell sx={{ color: 'white' }}>{formatTime(entry.time)}</TableCell>
+                    <TableCell sx={{ color: 'white' }}>{entry.targetPath}</TableCell>
+                    <TableCell sx={{ color: 'white' }}>{entry.context?.userId}</TableCell>
+                    <TableCell sx={{ color: 'white' }}>
+                      <Chip label={(entry.decision?.risk || 0).toFixed(2)} size="small"
+                        color={(entry.decision?.risk || 0) > 0.7 ? 'error' : 'success'} />
+                    </TableCell>
+                    <TableCell sx={{ color: 'white' }}>
+                      {(entry.tls?.risk || 0) > 0 ? (
+                        <Chip label={entry.tls.risk.toFixed(2)} size="small" color="warning" />
+                      ) : '0.00'}
+                    </TableCell>
+                    <TableCell sx={{ color: 'white' }}>
+                      <Chip label={entry.decision?.allow !== false ? 'ALLOWED' : 'BLOCKED'} 
+                        color={entry.decision?.allow !== false ? 'success' : 'error'} />
                     </TableCell>
                   </TableRow>
-                )}
+                ))}
               </TableBody>
             </Table>
           </TableContainer>

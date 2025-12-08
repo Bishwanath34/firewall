@@ -1,286 +1,133 @@
-import React, { useState } from "react";
-import axios from "axios";
+import React from 'react';
+import axios from 'axios';
+import { Container, Typography, Paper, Box, Button, Alert } from '@mui/material';
 
-const GATEWAY_URL = "http://localhost:4000";
+const TLS_GATEWAY = 'https://localhost:4001';
 
 function App() {
-  const [userId, setUserId] = useState("alice");
-  const [role, setRole] = useState("user");
-  const [lastRequest, setLastRequest] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = React.useState('Ready to test...');
+  const [loading, setLoading] = React.useState(false);
 
-  const callApi = async (path) => {
+  // Configure axios for self-signed TLS + CORS
+  axios.defaults.httpsAgent = {
+    rejectUnauthorized: false
+  };
+
+  const testEndpoint = async (path, label) => {
+    setLoading(true);
+    setStatus(`Testing ${label}...`);
+    
     try {
-      setLoading(true);
-      setLastRequest(null);
-
-      const res = await axios.get(`${GATEWAY_URL}/fw${path}`, {
-        headers: {
-          "x-user-id": userId || "anonymous",
-          "x-user-role": role || "guest",
+      const res = await axios.get(`${TLS_GATEWAY}${path}`, {
+        headers: { 
+          'x-user-id': 'testuser', 
+          'x-user-role': 'guest',
+          'Accept': 'application/json'
         },
-        validateStatus: () => true, // don't throw on 403, 500, etc.
+        timeout: 8000
       });
-
-      setLastRequest({
-        path,
-        status: res.status,
-        data: res.data,
-      });
+      setStatus(`${label}: ${res.status} - ${JSON.stringify(res.data).slice(0, 80)}...`);
     } catch (err) {
-      setLastRequest({
-        path,
-        status: "ERROR",
-        data: { error: err.message },
-      });
+      const status = err.response?.status || 'NETWORK_ERROR';
+      const message = err.response?.data?.error || err.message;
+      setStatus(`${label}: ${status} - ${message}`);
     } finally {
       setLoading(false);
     }
   };
 
+  const openLogs = () => {
+    window.open(`${TLS_GATEWAY}/admin/logs`, '_blank');
+  };
+
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#020617",
-        color: "white",
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-      }}
-    >
-      {/* Header */}
-      <header
-        style={{
-          padding: "16px 24px",
-          borderBottom: "1px solid #1f2937",
-          marginBottom: 24,
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: 24 }}>Dummy Web App (Protected by AI–NGFW)</h1>
-        <p style={{ margin: 0, marginTop: 4, color: "#9ca3af", fontSize: 14 }}>
-          This is the user-side application. All requests go through the firewall gateway
-          at <code style={{ color: "#e5e7eb" }}>http://localhost:4000/fw/…</code>
-        </p>
-      </header>
+    <Container maxWidth="md" sx={{ mt: 4, p: 3 }}>
+      <Paper sx={{ p: 4, textAlign: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
+        <Typography variant="h3" gutterBottom>
+          Dummy Site (Protected by AI-NGFW)
+        </Typography>
+        <Typography variant="h6" sx={{ mb: 4 }}>
+          TLS Proxy: https://localhost:4001 | Backend: https://localhost:9001
+        </Typography>
+        
+        <Alert severity="info" sx={{ mb: 3, justifyContent: 'center' }}>
+          <Typography variant="body2">
+            All traffic → Decrypted → DPI → Re-encrypted → Backend
+          </Typography>
+        </Alert>
 
-      <main
-        style={{
-          maxWidth: 900,
-          margin: "0 auto",
-          padding: "0 16px 40px",
-        }}
-      >
-        {/* User "session" section */}
-        <section
-          style={{
-            marginBottom: 24,
-            padding: 16,
-            borderRadius: 8,
-            border: "1px solid #1f2937",
-            background: "#030712",
-          }}
-        >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>User Session</h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            Pretend you are a user or an attacker. Choose an identity and role, then call
-            different endpoints. The admin can watch everything on the security dashboard.
-          </p>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 500, mx: 'auto' }}>
+          <Button 
+            fullWidth 
+            variant="contained" 
+            size="large"
+            onClick={() => testEndpoint('/fw/info', 'Normal Access')}
+            disabled={loading}
+            sx={{ py: 2 }}
+          >
+            ✅ Test Normal /info (Should PASS)
+          </Button>
+          
+          <Button 
+            fullWidth 
+            variant="contained" 
+            color="warning"
+            size="large"
+            onClick={() => testEndpoint('/fw/admin/secret', 'Admin Access')}
+            disabled={loading}
+            sx={{ py: 2 }}
+          >
+            Test Admin /secret (Should BLOCK)
+          </Button>
+          
+          <Button 
+            fullWidth 
+            variant="contained" 
+            color="error"
+            size="large"
+            onClick={() => testEndpoint('/fw/honeypot/db-export', 'Honeypot Trap')}
+            disabled={loading}
+            sx={{ py: 2 }}
+          >
+            Test Honeypot (Should BLOCK)
+          </Button>
+          
+          <Button 
+            fullWidth 
+            variant="outlined" 
+            size="large"
+            onClick={openLogs}
+            disabled={loading}
+            sx={{ py: 2, borderColor: 'white', color: 'white', '&:hover': { borderColor: 'white' } }}
+          >
+            Open Firewall Logs
+          </Button>
+        </Box>
 
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <label style={{ display: "block", fontSize: 14, marginBottom: 4 }}>
-                User ID
-              </label>
-              <input
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                placeholder="alice, bob…"
-                style={{
-                  width: "100%",
-                  padding: "6px 8px",
-                  borderRadius: 4,
-                  border: "1px solid #374151",
-                  background: "#020617",
-                  color: "white",
-                }}
-              />
-            </div>
+        <Paper sx={{ mt: 4, p: 3, background: '#f8fafc' }}>
+          <Typography variant="h6" gutterBottom color="textSecondary">
+            Latest Test:
+          </Typography>
+          <Box sx={{ p: 2, background: '#e2e8f0', borderRadius: 1, minHeight: 60, display: 'flex', alignItems: 'center' }}>
+            <Typography variant="body1" sx={{ fontFamily: 'monospace', fontSize: 14 }}>
+              {status}
+            </Typography>
+          </Box>
+          <Typography variant="caption" sx={{ mt: 1, display: 'block', color: 'text.secondary' }}>
+            Expected: Normal=200 ✅ | Admin=403 ❌ | Honeypot=403 ❌
+          </Typography>
+        </Paper>
 
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <label style={{ display: "block", fontSize: 14, marginBottom: 4 }}>
-                Role
-              </label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "6px 8px",
-                  borderRadius: 4,
-                  border: "1px solid #374151",
-                  background: "#020617",
-                  color: "white",
-                }}
-              >
-                <option value="guest">guest</option>
-                <option value="user">user</option>
-                <option value="admin">admin</option>
-              </select>
-            </div>
-          </div>
-        </section>
-
-        {/* Normal actions */}
-        <section
-          style={{
-            marginBottom: 24,
-            padding: 16,
-            borderRadius: 8,
-            border: "1px solid #1f2937",
-            background: "#030712",
-          }}
-        >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>Normal Actions</h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            These simulate normal user behavior. In most cases, the firewall should allow
-            them if the role is appropriate.
-          </p>
-
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-            <button
-              onClick={() => callApi("/info")}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "#16a34a",
-                color: "white",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              GET /info
-            </button>
-
-            <button
-              onClick={() => callApi("/profile")}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "#2563eb",
-                color: "white",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              GET /profile
-            </button>
-          </div>
-        </section>
-
-        {/* "Attacker" actions */}
-        <section
-          style={{
-            marginBottom: 24,
-            padding: 16,
-            borderRadius: 8,
-            border: "1px solid #1f2937",
-            background: "#030712",
-          }}
-        >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>Suspicious / Attack Actions</h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            These endpoints simulate attackers probing admin areas or honeypots. The
-            firewall should either block them or flag them as high risk.
-          </p>
-
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-            <button
-              onClick={() => callApi("/admin/secret")}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "#ea580c",
-                color: "white",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              GET /admin/secret
-            </button>
-
-            <button
-              onClick={() => callApi("/honeypot/db-export")}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "#b91c1c",
-                color: "white",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              GET /honeypot/db-export (Honeypot)
-            </button>
-          </div>
-        </section>
-
-        {/* Last response */}
-        <section
-          style={{
-            padding: 16,
-            borderRadius: 8,
-            border: "1px solid #1f2937",
-            background: "#030712",
-          }}
-        >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>Last Response</h2>
-
-          {loading && (
-            <p style={{ color: "#9ca3af", fontSize: 14 }}>
-              Sending request…
-            </p>
-          )}
-
-          {!loading && !lastRequest && (
-            <p style={{ color: "#6b7280", fontSize: 14 }}>
-              No request yet. Click one of the buttons above to call the API via the firewall.
-            </p>
-          )}
-
-          {!loading && lastRequest && (
-            <div
-              style={{
-                fontFamily: "monospace",
-                fontSize: 13,
-                whiteSpace: "pre-wrap",
-                background: "#020617",
-                borderRadius: 6,
-                padding: 10,
-                border: "1px solid #1f2937",
-              }}
-            >
-              <div style={{ marginBottom: 6 }}>
-                <span style={{ color: "#9ca3af" }}>Path:</span> {lastRequest.path}
-              </div>
-              <div style={{ marginBottom: 6 }}>
-                <span style={{ color: "#9ca3af" }}>Status:</span> {lastRequest.status}
-              </div>
-              <div>
-                <span style={{ color: "#9ca3af" }}>Body:</span>{" "}
-                {JSON.stringify(lastRequest.data, null, 2)}
-              </div>
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
+        <Box sx={{ mt: 6, p: 3, textAlign: 'center' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            🔒 Full TLS Decryption → Deep Packet Inspection → Re-Encryption
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Trust gateway/cert.pem in browser for https://localhost:4001
+          </Typography>
+        </Box>
+      </Paper>
+    </Container>
   );
 }
 
