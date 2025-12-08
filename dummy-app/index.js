@@ -4,48 +4,56 @@ const cors = require("cors");
 
 const app = express();
 app.use(express.json());
-app.use(cors());
 app.use(morgan("dev"));
+app.use(cors());
 
-// ---------------- BASIC DUMMY BACKEND ----------------
-
-// This is the backend that our AI–NGFW gateway is protecting.
-// For CP1 it's intentionally simple and does not use a database yet.
-
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    service: "Dummy backend (CP1)",
-    time: new Date().toISOString(),
-  });
+// Root – quick check
+app.get("/", (req, res) => {
+  res.json({ message: "AI-NGFW Dummy App Running", time: new Date() });
 });
 
+// Normal informational endpoint
 app.get("/info", (req, res) => {
   res.json({
-    message: "Public info from dummy backend",
-    version: "cp1",
+    service: "Dummy Backend Info",
+    version: "1.0",
+    time: new Date().toISOString()
   });
 });
 
+// Normal user profile endpoint
 app.get("/profile", (req, res) => {
-  // In a real app this would depend on the authenticated user.
   res.json({
-    user: "demo-user",
-    plan: "basic",
-    features: ["view_profile", "view_public_info"],
+    user: req.headers["x-user-id"] || "anonymous",
+    role: req.headers["x-user-role"] || "guest",
+    bio: "This is dummy profile data protected by the firewall."
   });
 });
 
+// Admin-only secret endpoint (this should normally be blocked for guests)
 app.get("/admin/secret", (req, res) => {
   res.json({
-    message: "Top secret admin data from dummy backend.",
-    tip: "Your firewall should eventually protect this path more strictly.",
+    secret: "TOP SECRET ADMIN DATA",
+    note: "If you see this as guest, firewall rules are misconfigured!"
   });
 });
 
-// ---------------- START SERVER -------------------
+// HONEYPOT endpoint – fake DB export
+app.get("/honeypot/db-export", (req, res) => {
+  console.log("⚠️  HONEYPOT ACCESSED on backend! This should be very rare.");
+  res.json({
+    warning: "Honeypot endpoint accessed!",
+    message:
+      "This simulates a sensitive DB export endpoint. In production, this would trigger heavy alerts.",
+    fakeDump: {
+      dbPassword: "fake_admin_pass",
+      privateKey: "FAKE_PRIVATE_KEY_ABC123",
+      envFile: "API_KEY=fake_key_123",
+      rowsLeaked: 5000
+    }
+  });
+});
 
-const PORT = 9000;
-app.listen(PORT, () => {
-  console.log(`Dummy backend (CP1) running at http://localhost:${PORT}`);
+app.listen(9000, () => {
+  console.log("Dummy backend running on http://localhost:9000");
 });

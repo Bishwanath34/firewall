@@ -55,22 +55,10 @@ function App() {
           marginBottom: 24,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 24 }}>
-          Dummy Web App (Protected by AI–NGFW)
-        </h1>
-        <p
-          style={{
-            margin: 0,
-            marginTop: 4,
-            color: "#9ca3af",
-            fontSize: 14,
-          }}
-        >
-          This is the user-side application. All requests go through the
-          firewall gateway at{" "}
-          <code style={{ color: "#e5e7eb" }}>
-            http://localhost:4000/fw/…
-          </code>
+        <h1 style={{ margin: 0, fontSize: 24 }}>Dummy Web App (Protected by AI–NGFW)</h1>
+        <p style={{ margin: 0, marginTop: 4, color: "#9ca3af", fontSize: 14 }}>
+          This is the user-side application. All requests go through the firewall gateway
+          at <code style={{ color: "#e5e7eb" }}>http://localhost:4000/fw/…</code>
         </p>
       </header>
 
@@ -91,36 +79,15 @@ function App() {
             background: "#030712",
           }}
         >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
-            User Session
-          </h2>
-          <p
-            style={{
-              marginTop: 0,
-              color: "#9ca3af",
-              fontSize: 14,
-            }}
-          >
-            Choose an identity and role, then call different endpoints.
-            The admin can watch all traffic on the security dashboard.
+          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>User Session</h2>
+          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
+            Pretend you are a user or an attacker. Choose an identity and role, then call
+            different endpoints. The admin can watch everything on the security dashboard.
           </p>
 
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              flexWrap: "wrap",
-              marginTop: 12,
-            }}
-          >
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
             <div style={{ flex: 1, minWidth: 180 }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 14,
-                  marginBottom: 4,
-                }}
-              >
+              <label style={{ display: "block", fontSize: 14, marginBottom: 4 }}>
                 User ID
               </label>
               <input
@@ -139,13 +106,7 @@ function App() {
             </div>
 
             <div style={{ flex: 1, minWidth: 180 }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 14,
-                  marginBottom: 4,
-                }}
-              >
+              <label style={{ display: "block", fontSize: 14, marginBottom: 4 }}>
                 Role
               </label>
               <select
@@ -178,28 +139,13 @@ function App() {
             background: "#030712",
           }}
         >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
-            Normal Actions
-          </h2>
-          <p
-            style={{
-              marginTop: 0,
-              color: "#9ca3af",
-              fontSize: 14,
-            }}
-          >
-            These simulate normal user behaviour. In CP1 the gateway simply
-            forwards them and logs every request.
+          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>Normal Actions</h2>
+          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
+            These simulate normal user behavior. In most cases, the firewall should allow
+            them if the role is appropriate.
           </p>
 
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              flexWrap: "wrap",
-              marginTop: 12,
-            }}
-          >
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
             <button
               onClick={() => callApi("/info")}
               disabled={loading}
@@ -234,6 +180,57 @@ function App() {
           </div>
         </section>
 
+        {/* "Attacker" actions */}
+        <section
+          style={{
+            marginBottom: 24,
+            padding: 16,
+            borderRadius: 8,
+            border: "1px solid #1f2937",
+            background: "#030712",
+          }}
+        >
+          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>Suspicious / Attack Actions</h2>
+          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
+            These endpoints simulate attackers probing admin areas or honeypots. The
+            firewall should either block them or flag them as high risk.
+          </p>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+            <button
+              onClick={() => callApi("/admin/secret")}
+              disabled={loading}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: "#ea580c",
+                color: "white",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              GET /admin/secret
+            </button>
+
+            <button
+              onClick={() => callApi("/honeypot/db-export")}
+              disabled={loading}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: "#b91c1c",
+                color: "white",
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              GET /honeypot/db-export (Honeypot)
+            </button>
+          </div>
+        </section>
+
         {/* Last response */}
         <section
           style={{
@@ -243,9 +240,7 @@ function App() {
             background: "#030712",
           }}
         >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
-            Last Response
-          </h2>
+          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>Last Response</h2>
 
           {loading && (
             <p style={{ color: "#9ca3af", fontSize: 14 }}>
@@ -255,8 +250,7 @@ function App() {
 
           {!loading && !lastRequest && (
             <p style={{ color: "#6b7280", fontSize: 14 }}>
-              No request yet. Click one of the buttons above to call the API
-              via the firewall.
+              No request yet. Click one of the buttons above to call the API via the firewall.
             </p>
           )}
 
@@ -273,12 +267,10 @@ function App() {
               }}
             >
               <div style={{ marginBottom: 6 }}>
-                <span style={{ color: "#9ca3af" }}>Path:</span>{" "}
-                {lastRequest.path}
+                <span style={{ color: "#9ca3af" }}>Path:</span> {lastRequest.path}
               </div>
               <div style={{ marginBottom: 6 }}>
-                <span style={{ color: "#9ca3af" }}>Status:</span>{" "}
-                {lastRequest.status}
+                <span style={{ color: "#9ca3af" }}>Status:</span> {lastRequest.status}
               </div>
               <div>
                 <span style={{ color: "#9ca3af" }}>Body:</span>{" "}

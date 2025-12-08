@@ -36,7 +36,111 @@ function buildContext(req) {
   };
 }
 
+// -------------- RULE RISK ENGINE --------------
 
+async function checkRiskRule(ctx) {
+  let risk = 0.0;
+  const reasons = [];
+
+  // Rule 1: anonymous / no user id
+  if (!ctx.userId || ctx.userId === "anonymous") {
+    risk += 0.2;
+    reasons.push("no_user_id");
+  }
+
+  // Rule 2: accessing /admin area
+  if (ctx.path.startsWith("/admin")) {
+    risk += 0.5;
+    reasons.push("admin_path");
+  }
+
+  // Rule 3: guest trying admin
+  if (ctx.path.startsWith("/admin") && ctx.role === "guest") {
+    risk += 0.3;
+    reasons.push("guest_on_admin_path");
+  }
+
+  // Rule 4: HONEYPOT — extremely high risk
+  if (ctx.path.startsWith("/honeypot")) {
+    risk += 0.8;
+    reasons.push("honeypot_path");
+  }
+
+  // Label from rule-risk
+  let label = "normal";
+  if (risk >= 0.7) label = "high_risk";
+  else if (risk >= 0.4) label = "medium_risk";
+
+  return { risk, label, reasons };
+}
+
+// -------------- ML RISK ENGINE ----------------
+
+async function scoreWithML(ctx) {
+  try {
+    const res = await axios.post(
+      "http://localhost:5000/score",
+      {
+        method: ctx.method,
+        path: ctx.path,
+        role: ctx.role,
+        userId: ctx.userId,
+        userAgent: ctx.userAgent,
+        risk_rule: ctx.risk_rule,
+      },
+      { validateStatus: () => true }
+    );
+
+    return {
+      ml_risk: res.data.ml_risk,
+      ml_label: res.data.ml_label,
+    };
+  } catch (err) {
+    console.error("ML service error:", err.message);
+    return { ml_risk: 0.0, ml_label: "normal" };
+  }
+}
+
+// ---------------- RBAC TABLE -------------------
+
+const RBAC = {
+  guest: {
+    allow: ["/info"],
+    deny: ["/admin", "/admin/secret", "/admin/*"],
+  },
+  user: {
+    allow: ["/info", "/profile"],
+    deny: ["/admin", "/admin/*"],
+  },
+  admin: {
+    allow: ["*"],
+    deny: [],
+  },
+};
+
+function checkRBAC(role, pathReq) {
+  const rules = RBAC[role] || RBAC["guest"];
+
+  // SPECIAL CASE: HONEYPOT SHOULD NOT BE BLOCKED BY RBAC
+  if (pathReq.startsWith("/honeypot")) return true;
+
+  // Admin => everything
+  if (rules.allow.includes("*")) return true;
+
+  // Deny rules first
+  for (const d of rules.deny) {
+    if (pathReq.startsWith(d.replace("*", ""))) return false;
+  }
+
+  // Allow rules
+  for (const a of rules.allow) {
+    if (pathReq.startsWith(a.replace("*", ""))) return true;
+  }
+
+  return false;
+}
+
+// -------------- ADMIN: VIEW LOGS ---------------
 
 app.get("/admin/logs", (req, res) => {
   res.json(auditLogs);
@@ -71,7 +175,10 @@ app.use("/fw", async (req, res) => {
       statusCode: response.status,
     };
 
-    auditLogs.push(entry);
+    res.set("x-ngfw-rule-risk", ruleDecision.risk.toString());
+    res.set("x-ngfw-ml-risk", ml.ml_risk.toString());
+    res.set("x-ngfw-final-risk", finalRisk.toString());
+    res.set("x-ngfw-label", finalLabel);
 
     return res.status(response.status).json(response.data);
   } catch (err) {
@@ -100,6 +207,5 @@ app.use("/fw", async (req, res) => {
 
 
 app.listen(4000, () => {
-  console.log("AI-NGFW Gateway (CP1) running at http://localhost:4000");
-  console.log("Forwarding all /fw/* traffic to", BACKEND);
+  console.log("AI-NGFW Gateway running at http://localhost:4000");
 });
