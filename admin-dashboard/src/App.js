@@ -37,7 +37,7 @@ function App() {
   // TLS Simulator (direct HTTPS calls)
   const simulateRequest = async (path, userId, role) => {
     try {
-      console.log('TLS simulation:', path, userId, role);
+      console.log('Traffic simulation:', path, userId, role);
       await axios.get(`${TLS_GATEWAY}${path}`, {
         headers: { 
           'x-user-id': userId, 
@@ -47,7 +47,7 @@ function App() {
       });
       await loadLogs();
     } catch (err) {
-      console.log('TLS sim result:', err.response?.status || err.message);
+      console.log('Traffic simulation result:', err.response?.status || err.message);
       await loadLogs();
     }
   };
@@ -132,7 +132,7 @@ function App() {
     index: idx + 1,
     timeLabel: formatTime(e.time),
     risk: e.decision?.risk ?? 0,
-    tlsRisk: e.tls?.risk ?? 0,
+    // tlsRisk: e.tls?.risk ?? 0,
     allowed: e.decision?.allow ? 1 : 0,
   }));
 
@@ -151,7 +151,7 @@ function App() {
       <AppBar position="static" color="primary">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            AI-NGFW Dashboard (TLS-Only)
+            AI-NGFW Dashboard
           </Typography>
           <Typography variant="body2" color="inherit">
             https://localhost:4001
@@ -171,7 +171,7 @@ function App() {
             <Typography variant="h4">{allowedCount}</Typography>
           </Paper>
           <Paper sx={{ flex: 1, p: 2, minWidth: 200, background: '#7f1d1d', color: 'white' }}>
-            <Typography variant="subtitle2">TLS Blocks</Typography>
+            <Typography variant="subtitle2">Blocked</Typography>
             <Typography variant="h4">{highRiskCount}</Typography>
           </Paper>
         </Box>
@@ -179,19 +179,19 @@ function App() {
         {/* Charts */}
         <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
           <Paper sx={{ flex: 1, p: 2, minWidth: 400, background: '#020617', color: 'white' }}>
-            <Typography variant="h6" gutterBottom>TLS Risk Trends</Typography>
+            <Typography variant="h6" gutterBottom>Risk Trends</Typography>
             {timeSeriesData.length === 0 ? (
               <Typography variant="body2" sx={{ color: '#6b7280' }}>No data yet</Typography>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={timeSeriesData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="timeLabel" angle={-45} height={60} />
+                  <XAxis dataKey="timeLabel" angle={-30} height={60} />
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="risk" name="Risk" stroke="#3b82f6" />
-                  <Line type="monotone" dataKey="tlsRisk" name="TLS Risk" stroke="#f59e0b" strokeWidth={3} />
+                  <Line type="monotone" dataKey="risk" name="Risk" stroke="#3b82f6" strokeWidth={2} />
+                  {/* <Line type="monotone" dataKey="tlsRisk" name="TLS Risk" stroke="#f59e0b" strokeWidth={2} /> */}
                 </LineChart>
               </ResponsiveContainer>
             )}
@@ -204,7 +204,7 @@ function App() {
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={pathStats.slice(0, 10)}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="path" angle={-45} height={60} />
+                  <XAxis dataKey="path" angle={-30} height={60} />
                   <YAxis />
                   <Tooltip />
                   <Legend />
@@ -219,7 +219,7 @@ function App() {
         {/* Live Feed + Simulator */}
         <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
           <Paper sx={{ flex: 2, p: 2, background: '#020617', color: 'white', fontFamily: 'monospace' }}>
-            <Typography variant="h6" gutterBottom>Live TLS Traffic</Typography>
+            <Typography variant="h6" gutterBottom>Live Traffic</Typography>
             <Box sx={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #1f2937', p: 1, borderRadius: 1 }}>
               {displayLogs.slice(0, 10).map((entry, idx) => {
                 const isAllowed = entry.decision?.allow !== false;
@@ -231,9 +231,9 @@ function App() {
                     <span style={{ color: isAllowed ? '#4ade80' : '#f87171' }}>
                       {isAllowed ? 'ALLOWED' : 'BLOCKED'}
                     </span>
-                    {entry.tls?.risk > 0 && (
+                    {/* {entry.tls?.risk > 0 && (
                       <Chip label={`TLS:${entry.tls.risk.toFixed(1)}`} size="small" color="warning" />
-                    )}
+                    )} */}
                   </Box>
                 );
               })}
@@ -242,16 +242,16 @@ function App() {
           </Paper>
 
           <Paper sx={{ flex: 1, p: 2, background: '#020617', color: 'white', minWidth: 260 }}>
-            <Typography variant="h6" gutterBottom>TLS Simulator</Typography>
+            <Typography variant="h6" gutterBottom>Simulator</Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <Button fullWidth variant="contained" color="success" onClick={simulateNormalUserInfo}>
-                ✅ Normal /info
+                Normal /info
               </Button>
               <Button fullWidth variant="contained" color="warning" onClick={simulateSuspiciousGuestAdmin}>
-                ⚠️ Guest /admin
+                Guest /admin
               </Button>
               <Button fullWidth variant="contained" color="error" onClick={simulateGuestAdminRBAC}>
-                ❌ RBAC Block
+                RBAC Block
               </Button>
             </Box>
           </Paper>
@@ -260,7 +260,7 @@ function App() {
         {/* Tables */}
         <Paper sx={{ p: 2, background: '#020617' }}>
           <Typography variant="h6" color="white" sx={{ mb: 2 }}>
-            TLS Firewall Logs ({filteredLogs.length})
+            Firewall Logs ({filteredLogs.length})
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
               {/* Export buttons */}
@@ -351,7 +351,7 @@ function App() {
                   <TableCell sx={{ color: 'white', background: '#111827' }}>Path</TableCell>
                   <TableCell sx={{ color: 'white', background: '#111827' }}>User</TableCell>
                   <TableCell sx={{ color: 'white', background: '#111827' }}>Risk</TableCell>
-                  <TableCell sx={{ color: 'white', background: '#111827' }}>TLS</TableCell>
+                  {/* <TableCell sx={{ color: 'white', background: '#111827' }}>TLS</TableCell> */}
                   <TableCell sx={{ color: 'white', background: '#111827' }}>Decision</TableCell>
                 </TableRow>
               </TableHead>
@@ -365,11 +365,11 @@ function App() {
                       <Chip label={(entry.decision?.risk || 0).toFixed(2)} size="small"
                         color={(entry.decision?.risk || 0) > 0.7 ? 'error' : 'success'} />
                     </TableCell>
-                    <TableCell sx={{ color: 'white' }}>
+                    {/* <TableCell sx={{ color: 'white' }}>
                       {(entry.tls?.risk || 0) > 0 ? (
                         <Chip label={entry.tls.risk.toFixed(2)} size="small" color="warning" />
                       ) : '0.00'}
-                    </TableCell>
+                    </TableCell> */}
                     <TableCell sx={{ color: 'white' }}>
                       <Chip label={entry.decision?.allow !== false ? 'ALLOWED' : 'BLOCKED'} 
                         color={entry.decision?.allow !== false ? 'success' : 'error'} />

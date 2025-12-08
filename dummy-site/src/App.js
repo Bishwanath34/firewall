@@ -47,7 +47,7 @@ function App() {
           Dummy Site (Protected by AI-NGFW)
         </Typography>
         <Typography variant="h6" sx={{ mb: 4 }}>
-          TLS Proxy: https://localhost:4001 | Backend: https://localhost:9001
+          Proxy: https://localhost:4001 | Backend: https://localhost:9001
         </Typography>
         
         <Alert severity="info" sx={{ mb: 3, justifyContent: 'center' }}>
@@ -65,7 +65,7 @@ function App() {
             disabled={loading}
             sx={{ py: 2 }}
           >
-            ✅ Test Normal /info (Should PASS)
+            Test Normal /info (Should PASS)
           </Button>
           
           <Button 
@@ -114,18 +114,9 @@ function App() {
             </Typography>
           </Box>
           <Typography variant="caption" sx={{ mt: 1, display: 'block', color: 'text.secondary' }}>
-            Expected: Normal=200 ✅ | Admin=403 ❌ | Honeypot=403 ❌
+            Expected: Normal=200 | Admin=403 | Honeypot=403
           </Typography>
         </Paper>
-
-        <Box sx={{ mt: 6, p: 3, textAlign: 'center' }}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            🔒 Full TLS Decryption → Deep Packet Inspection → Re-Encryption
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Trust gateway/cert.pem in browser for https://localhost:4001
-          </Typography>
-        </Box>
       </Paper>
     </Container>
   );

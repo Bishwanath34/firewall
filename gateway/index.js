@@ -4,8 +4,9 @@ const cors = require('cors');
 const fs = require('fs');
 const pem = require('pem');
 const https = require('https');
+const tlsFingerprint = require('read-tls-client-hello');
 
-// SHARED GLOBAL LOGS
+// Shared global logs
 let auditLogs = [];
 
 // Generate self-signed certs (one-time)
@@ -16,13 +17,13 @@ async function ensureCerts() {
       if (err) return reject(err);
       fs.writeFileSync('key.pem', keys.serviceKey);
       fs.writeFileSync('cert.pem', keys.certificate);
-      console.log('✓ Generated TLS certs');
+      console.log('Generated TLS certs');
       resolve();
     });
   });
 }
 
-// Core functions (unchanged)
+// Core functions
 function buildContext(req) {
   return {
     ip: req.socket.remoteAddress,
@@ -38,11 +39,11 @@ function buildContext(req) {
 async function checkRiskRule(ctx) {
   let risk = 0.0;
   const reasons = [];
-  if (!ctx.userId || ctx.userId === 'anonymous') { risk += 0.2; reasons.push('no_user_id'); }
-  if (ctx.path.startsWith('/admin')) { risk += 0.5; reasons.push('admin_path'); }
-  if (ctx.path.startsWith('/admin') && ctx.role === 'guest') { risk += 0.3; reasons.push('guest_on_admin_path'); }
-  if (ctx.path.startsWith('/honeypot')) { risk += 0.8; reasons.push('honeypot_path'); }
-  const label = risk >= 0.7 ? 'high_risk' : risk >= 0.4 ? 'medium_risk' : 'normal';
+  if (!ctx.userId || ctx.userId === 'anonymous') { risk += 0.15; reasons.push('no_user_id'); }
+  if (ctx.path.startsWith('/admin')) { risk += 0.45; reasons.push('admin_path'); }
+  if (ctx.path.startsWith('/admin') && ctx.role === 'guest') { risk += 0.25; reasons.push('guest_on_admin_path'); }
+  if (ctx.path.startsWith('/honeypot')) { risk += 0.75; reasons.push('honeypot_path'); }
+  const label = risk >= 0.7 ? 'high_risk' : risk >= 0.35 ? 'medium_risk' : 'normal';
   return { risk, label, reasons };
 }
 
@@ -86,23 +87,54 @@ async function inspectAndForward(req, res) {
 
   const ctx = buildContext(req);
   const forwardPath = req.url.replace(/^\/fw/, '');
-  const target = 'https://localhost:9001' + forwardPath;  // ← TLS Backend
+  const target = 'https://localhost:9001' + forwardPath; 
 
-  // TLS DPI rules (unchanged)
+  // TLS DPI rules
   let tlsRisk = 0.0;
   const tlsReasons = [];
-  if (req.headers['x-forwarded-proto'] !== 'https') { 
-    tlsRisk += 0.3; tlsReasons.push('downgrade_attempt'); 
-  }
-  if (req.socket.getCipher && req.socket.getCipher().name.includes('RC4')) { 
-    tlsRisk += 0.6; tlsReasons.push('weak_cipher'); 
-  }
-  if (req.headers['user-agent']?.includes('curl') && ctx.role === 'guest') { 
-    tlsRisk += 0.4; tlsReasons.push('suspicious_ua'); 
+
+  // JA3 BOT SIGNALS (primary contributor)
+  if (req.tlsFingerprint?.botScore) {
+    tlsRisk += req.tlsFingerprint.botScore;  // Full botScore contribution
+    tlsReasons.push(...req.tlsFingerprint.signals);
   }
 
+  // Protocol downgrade detection
+  if (req.headers['x-forwarded-proto'] !== 'https') {
+    tlsRisk += 0.20;
+    tlsReasons.push('protocol_downgrade');
+  }
+
+  // Weak cipher suites
+  if (req.socket.getCipher && 
+      (req.socket.getCipher().name.includes('RC4') || 
+      req.socket.getCipher().name.includes('CBC') || 
+      req.socket.getCipher().name.includes('3DES'))) {
+    tlsRisk += 0.30;
+    tlsReasons.push('weak_cipher_suite');
+  }
+
+  // Suspicious User-Agent patterns (additional signal)
+  const ua = req.headers['user-agent'] || '';
+  if ((ua.includes('curl') || ua.includes('wget') || ua.includes('Python-urllib')) && ctx.role === 'guest') {
+    tlsRisk += 0.15;
+    tlsReasons.push('suspicious_ua');
+  }
+
+  // Cap at 1.0
+  tlsRisk = Math.min(tlsRisk, 1.0);
+
   const ruleDecision = await checkRiskRule(ctx);
-  const ml = await scoreWithML({ ...ctx, risk_rule: ruleDecision.risk });
+  const ml = await scoreWithML({
+    ...ctx,
+    risk_rule: ruleDecision.risk,
+    // JA3 + TLS Features
+    ja3_bot_score: req.tlsFingerprint?.botScore || 0.0,
+    ja3_hash: req.tlsFingerprint?.ja3Lite || '',
+    tls_signals_count: req.tlsFingerprint?.signals?.length || 0,
+    tls_cipher_strength: req.socket.getCipher()?.name || 'unknown',
+    tls_issuer: req.tlsFingerprint?.tlsInfo?.issuer || 'unknown'
+  });
   const finalRisk = Math.max(ruleDecision.risk, ml.ml_risk, tlsRisk);
   const finalLabel = finalRisk >= 0.7 ? 'high_risk' : finalRisk >= 0.4 ? 'medium_risk' : 'normal';
   const rbacAllowed = checkRBAC(ctx.role, forwardPath);
@@ -110,7 +142,11 @@ async function inspectAndForward(req, res) {
   const entry = {
     time: new Date().toISOString(),
     context: ctx,
-    tls: { risk: tlsRisk, reasons: tlsReasons },
+    tls: { 
+      risk: tlsRisk, 
+      reasons: tlsReasons,
+      fingerprint: req.tlsFingerprint  // Full JA3 data
+    },
     decision: { allow: rbacAllowed && finalRisk < 0.95, label: finalLabel, rbac: rbacAllowed, risk: finalRisk },
     targetPath: forwardPath,
     ruleRisk: ruleDecision.risk,
@@ -121,9 +157,8 @@ async function inspectAndForward(req, res) {
   auditLogs.push(entry);
 
   if (!rbacAllowed || finalRisk >= 0.95) {
-    console.log("here");
     return res.status(403).json({
-      error: 'Access denied by AI-NGFW (TLS Inspected)',
+      error: 'Access denied by AI-NGFW',
       reason: !rbacAllowed ? 'RBAC violation' : 'Critical risk',
       risk: finalRisk,
       tlsRisk,
@@ -131,7 +166,7 @@ async function inspectAndForward(req, res) {
     });
   }
 
-  // FORWARD TO TLS BACKEND
+  // Forward to TLS backend
   try {
     const response = await axios({
       method: req.method,
@@ -161,7 +196,7 @@ async function inspectAndForward(req, res) {
   }
 }
 
-// Admin endpoints (HTTPS only)
+  // Admin endpoints (HTTPS only)
 function createAdminEndpoints(app) {
   app.use(cors({ 
     origin: [
@@ -173,15 +208,16 @@ function createAdminEndpoints(app) {
     allowedHeaders: ['Content-Type', 'x-user-id', 'x-user-role', 'x-tls-sim'],
     credentials: true
   }));
+
   app.use(express.json());
-  
+
   app.get('/health', (req, res) => res.json({
     status: 'ok',
-    service: 'AI-NGFW Gateway (TLS-Only)',
+    service: 'AI-NGFW Gateway',
     time: new Date().toISOString(),
     logCount: auditLogs.length
   }));
-  
+
   app.get('/admin/logs', (req, res) => {
     console.log('Logs requested:', auditLogs.length, 'entries');
     res.json(auditLogs);
@@ -189,7 +225,7 @@ function createAdminEndpoints(app) {
   
   app.use('/fw', inspectAndForward);
 
-  // EXPORT LOGS (JSON / CSV, SIEM-STYLE)
+  // Export logs (JSON / CSV, SIEM-style)
   function normalizeLogForSIEM(entry) {
   const ctx = entry.context || {};
   const dec = entry.decision || {};
@@ -199,55 +235,55 @@ function createAdminEndpoints(app) {
       ? entry.statusCode < 400
       : dec.allow;
 
-  return {
-    // Core SIEM fields
-    timestamp: entry.time || ctx.timestamp,
-    event_type: "firewall_decision",
-    source_ip: ctx.ip || "unknown",
-    http_method: ctx.method || "GET",
-    url_path: ctx.path || entry.targetPath || "/",
-    user_id: ctx.userId || "anonymous",
-    user_role: ctx.role || "guest",
+    return {
+      // Core SIEM fields
+      timestamp: entry.time || ctx.timestamp,
+      event_type: "firewall_decision",
+      source_ip: ctx.ip || "unknown",
+      http_method: ctx.method || "GET",
+      url_path: ctx.path || entry.targetPath || "/",
+      user_id: ctx.userId || "anonymous",
+      user_role: ctx.role || "guest",
 
-    // Decision outcome
-    action: isAllowed ? "allowed" : "blocked",
-    status_code: entry.statusCode ?? null,
+      // Decision outcome
+      action: isAllowed ? "allowed" : "blocked",
+      status_code: entry.statusCode ?? null,
 
-    // Risk / AI fields
-    risk_score: dec.risk ?? null,
-    rule_risk: dec.rule_risk ?? null,
-    ml_risk: dec.ml_risk ?? null,
-    risk_label: dec.label || "normal",
-    ml_label: dec.ml_label || "normal",
+      // Risk / AI fields
+      risk_score: dec.risk ?? null,
+      rule_risk: dec.rule_risk ?? null,
+      ml_risk: dec.ml_risk ?? null,
+      risk_label: dec.label || "normal",
+      ml_label: dec.ml_label || "normal",
 
-    // Meta
-    gateway_service: "ai-ngfw-gateway",
-    protected_service: "dummy-backend",
-    reasons: dec.reasons || [],
-  };
-}
+      // Meta
+      gateway_service: "ai-ngfw-gateway",
+      protected_service: "dummy-backend",
+      reasons: dec.reasons || [],
+    };
+  }
 
-function logsToCSV(logs) {
-  const normalized = logs.map(normalizeLogForSIEM);
+  function logsToCSV(logs) {
+    const normalized = logs.map(normalizeLogForSIEM);
 
-  const headers = [
-    "timestamp",
-    "event_type",
-    "source_ip",
-    "http_method",
-    "url_path",
-    "user_id",
-    "user_role",
-    "action",
-    "status_code",
-    "risk_score",
-    "rule_risk",
-    "ml_risk",
-    "risk_label",
-    "ml_label",
-    "gateway_service",
-    "protected_service",
-  ];
+    const headers = [
+      "timestamp",
+      "event_type",
+      "source_ip",
+      "http_method",
+      "url_path",
+      "user_id",
+      "user_role",
+      "action",
+      "status_code",
+      "risk_score",
+      "rule_risk",
+      "ml_risk",
+      "risk_label",
+      "ml_label",
+      "gateway_service",
+      "protected_service",
+    ];
 
   function esc(v) {
     if (v === undefined || v === null) return '""';
@@ -274,9 +310,9 @@ function logsToCSV(logs) {
     esc(e.protected_service),
   ]);
 
-  const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  return csv;
-}
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    return csv;
+  }
 
   app.get("/admin/logs/export", (req, res) => {
     try {
@@ -323,15 +359,77 @@ async function startServer() {
     };
     next();
   });
-  
+
+  // JA3 Fingerprinting
+  app.use((req, res, next) => {
+    try {
+      const socket = req.socket;
+      const peerCert = socket.getPeerCertificate(false) || {};
+      
+      // Extract TLS metadata
+      const tlsInfo = {
+        version: socket.getProtocol() || 'unknown',
+        cipher: socket.getCipher()?.name || 'unknown',
+        sni: socket.servername || req.headers.host || 'unknown',
+        issuer: peerCert.issuer?.CN || 'unknown',
+        subject: peerCert.subject?.CN || 'unknown'
+      };
+      
+      // JA3-Lite fingerprint
+      const ja3Lite = [
+        tlsInfo.version.replace('TLSv', ''),
+        tlsInfo.cipher,
+        tlsInfo.sni,
+        tlsInfo.issuer
+      ].join('|').slice(0, 64);
+      
+      req.tlsFingerprint = {
+        ja3Lite: ja3Lite,
+        botScore: 0.0,
+        signals: [],
+        tlsInfo: tlsInfo
+      };
+      
+      // Bot risk signals (contributes to tlsRisk, no blocking)
+      const ua = (req.headers['user-agent'] || '').toLowerCase();
+      if (ua.includes('curl') || ua.includes('python-urllib') || ua.includes('wget') || ua.includes('node-fetch')) {
+        req.tlsFingerprint.botScore += 0.35;
+        req.tlsFingerprint.signals.push('scripted_ua');
+      }
+      
+      if (tlsInfo.cipher.includes('RC4') || tlsInfo.cipher.includes('CBC') || tlsInfo.cipher.includes('3DES')) {
+        req.tlsFingerprint.botScore += 0.25;
+        req.tlsFingerprint.signals.push('weak_cipher');
+      }
+      
+      if (!tlsInfo.sni || tlsInfo.sni === 'localhost' || tlsInfo.sni === '127.0.0.1') {
+        req.tlsFingerprint.botScore += 0.10;
+        req.tlsFingerprint.signals.push('local_sni');
+      }
+      
+      if (tlsInfo.issuer === 'unknown' || tlsInfo.issuer.includes('self-signed')) {
+        req.tlsFingerprint.botScore += 0.15;
+        req.tlsFingerprint.signals.push('selfsigned_cert');
+      }
+      
+      // Log for debugging (no blocking)
+      console.log(`JA3: ${ja3Lite.slice(0, 32)}... | BotScore: ${req.tlsFingerprint.botScore.toFixed(2)} | Signals: ${req.tlsFingerprint.signals.length}`);
+      
+    } catch (err) {
+      console.log('JA3-Lite failed:', err.message);
+    }
+    
+    next();
+  });
+
   createAdminEndpoints(app);
 
   https.createServer(tlsOptions, app).listen(4001, () => {
-    console.log('🚀 AI-NGFW TLS-ONLY Gateway running at https://localhost:4001');
-    console.log('📊 Admin: https://localhost:4001/admin/logs');
-    console.log('🔒 Firewall: https://localhost:4001/fw/*');
-    console.log('📱 Dashboard CORS: localhost:3000');
-    console.log('⚠️  Trust cert.pem in browser/OS for testing');
+    console.log('AI-NGFW Gateway running at https://localhost:4001');
+    console.log('Admin Logs: https://localhost:4001/admin/logs');
+    console.log('Endpoints: https://localhost:4001/fw/*');
+    console.log('Dashboard: localhost:3000');
+    console.log('Trust cert.pem in browser/OS for testing');
   });
 }
 

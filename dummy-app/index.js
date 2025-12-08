@@ -88,7 +88,7 @@ async function startServer() {
   };
 
   https.createServer(tlsOptions, app).listen(9001, () => {
-    console.log('🚀 Dummy Backend (TLS-ONLY) running at https://localhost:9001');
+    console.log('Dummy Backend running at https://localhost:9001');
     console.log('Available endpoints: /info, /profile, /admin/secret, /honeypot/db-export');
     console.log('Remember to trust backend cert in browser/OS');
   });
