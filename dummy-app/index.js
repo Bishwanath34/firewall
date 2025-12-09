@@ -1,77 +1,105 @@
-const express = require("express");
-const cors = require("cors");
+const https = require('https');
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const pem = require('pem');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
-app.use(express.raw({ type: "*/*" })); 
+app.use(express.raw({ type: '*/*' })); // Accept all content types
 
-// ----------------------------
-//  API ROUTES
-// ----------------------------
+// Generate self-signed cert for backend (one-time)
+async function ensureCerts() {
+  return new Promise((resolve, reject) => {
+    if (fs.existsSync('backend-cert.pem') && fs.existsSync('backend-key.pem')) {
+      resolve();
+      return;
+    }
 
-app.get("/info", (req, res) => {
+    pem.createCertificate(
+      { days: 365, selfSigned: true, keyBits: 2048 },
+      (err, keys) => {
+        if (err) return reject(err);
+        fs.writeFileSync('backend-key.pem', keys.serviceKey);
+        fs.writeFileSync('backend-cert.pem', keys.certificate);
+        console.log('[BACKEND] Generated self-signed TLS certs (backend-key.pem, backend-cert.pem)');
+        resolve();
+      }
+    );
+  });
+}
+
+// Basic demo endpoints
+app.get('/info', (req, res) => {
   res.json({
-    service: "Dummy Backend Info",
-    version: "1.0",
+    service: 'Dummy HTTPS Backend',
+    description:
+      'This is the protected service behind the AI‑NGFW gateway.',
+    docs: ['/info', '/profile', '/admin/secret', '/honeypot/db-export'],
     time: new Date().toISOString(),
-    user: req.headers["x-user-id"] || "anonymous",
   });
 });
 
-app.get("/profile", (req, res) => {
+app.get('/profile', (req, res) => {
+  const userId = req.headers['x-user-id'] || 'anonymous';
+  const role = req.headers['x-user-role'] || 'guest';
+
   res.json({
-    user: req.headers["x-user-id"] || "anonymous",
-    role: req.headers["x-user-role"] || "guest",
-    bio: "This is dummy profile data protected by the firewall.",
-    timestamp: new Date().toISOString(),
+    profile: {
+      userId,
+      role,
+      email: `${userId}@example.gov.in`,
+    },
+    note: 'This profile is simulated data from the dummy backend.',
+    time: new Date().toISOString(),
   });
 });
 
-app.get("/admin/secret", (req, res) => {
-  console.log("ADMIN SECRET accessed by:", req.headers["x-user-id"], req.headers["x-user-role"]);
+app.get('/admin/secret', (req, res) => {
   res.json({
-    secret: "TOP SECRET ADMIN DATA",
-    note: "If you see this as guest, firewall rules are bypassed!",
+    secret: 'TOP SECRET ADMIN DATA',
+    note: 'If you see this as a guest, firewall rules are bypassed!',
     sensitive: true,
     timestamp: new Date().toISOString(),
   });
 });
 
-app.get("/honeypot/db-export", (req, res) => {
-  console.log("HONEYPOT TRAPPED:", req.headers["x-user-id"], req.socket.remoteAddress);
+app.get('/honeypot/db-export', (req, res) => {
+  console.log(
+    '[HONEYPOT] TRAPPED:',
+    req.headers['x-user-id'],
+    req.socket.remoteAddress
+  );
   res.json({
-    warning: "Honeypot endpoint accessed!",
-    message: "This simulates a sensitive DB export endpoint.",
+    warning: 'Honeypot endpoint accessed!',
+    message: 'This simulates a sensitive DB export endpoint.',
     fakeDump: {
-      dbPassword: "fakeadminpass",
-      privateKey: "FAKEPRIVATEKEYABC123",
-      envFile: "APIKEY=fakekey123",
+      dbPassword: 'fakeadminpass',
+      users: ['alice', 'bob', 'charlie'],
     },
-    rowsLeaked: 5000,
     timestamp: new Date().toISOString(),
   });
 });
 
-// 404 fallback
-app.use((req, res) => {
-  res.status(404).json({
-    error: "Endpoint not found",
-    path: req.path,
-    method: req.method,
+async function startServer() {
+  await ensureCerts();
+
+  const tlsOptions = {
+    key: fs.readFileSync('backend-key.pem'),
+    cert: fs.readFileSync('backend-cert.pem'),
+    requestCert: false,
+    rejectUnauthorized: false,
+  };
+
+  // IMPORTANT: use 9001 so ML server can stay on 5000
+  const PORT = 9443;
+
+  https.createServer(tlsOptions, app).listen(PORT, () => {
+    console.log(`Dummy Backend running at https://localhost:${PORT}`);
+    console.log('Available endpoints: /info, /profile, /admin/secret, /honeypot/db-export');
+    console.log('Remember to trust backend cert in browser/OS');
   });
-});
+}
 
-// ----------------------------
-// Render-compatible HTTP server
-// ----------------------------
-
-const PORT = process.env.PORT || 9001;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("----------------------------------------------------");
-  console.log(`✔ Dummy Backend running on PORT ${PORT}`);
-  console.log("✔ Endpoints: /info, /profile, /admin/secret, /honeypot/db-export");
-  console.log("✔ HTTPS will be handled automatically by Render");
-  console.log("----------------------------------------------------");
-});
+startServer().catch(console.error);
