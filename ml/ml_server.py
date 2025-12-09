@@ -1,17 +1,32 @@
-from fastapi import FastAPI
-import joblib
-import uvicorn
-import os
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import pandas as pd
+import joblib
+import os
 
-# -------- Load trained ML model --------
+# ---------- App ----------
+app = FastAPI(title="AI-NGFW ML Scoring Service", version="1.0")
+
+# ---------- CORS (optional but recommended for production) ----------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------- Load Model ----------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(BASE_DIR, "model.joblib")
-model = joblib.load(model_path)
+MODEL_PATH = os.path.join(BASE_DIR, "model.joblib")
 
-app = FastAPI(title="AI-NGFW ML Scoring Service")
+try:
+    model = joblib.load(MODEL_PATH)
+except Exception as e:
+    raise Exception(f"❌ Failed to load model.joblib: {e}")
 
-# -------- Request schema --------
+
+# ---------- Request Schema ----------
 class RequestContext(BaseModel):
     method: str
     path: str
@@ -20,39 +35,46 @@ class RequestContext(BaseModel):
     userAgent: str
     risk_rule: float
 
-# -------- Scoring endpoint --------
+
+# ---------- Health Check ----------
+@app.get("/")
+def health():
+    return {"status": "ok", "service": "AI-NGFW ML model"}
+
+
+# ---------- Scoring API ----------
 @app.post("/score")
 def score(context: RequestContext):
+    try:
+        row = {
+            "method": context.method,
+            "path": context.path,
+            "role": context.role,
+            "userId": context.userId,
+            "userAgent": context.userAgent,
+            "risk_rule": context.risk_rule,
+        }
 
-    # Make a dataframe with a single row
-    row = {
-        "method": context.method,
-        "path": context.path,
-        "role": context.role,
-        "userId": context.userId,
-        "userAgent": context.userAgent,
-        "risk_rule": context.risk_rule,
-    }
+        df = pd.DataFrame([row])
 
-    import pandas as pd
-    df = pd.DataFrame([row])
+        # Predict probability of attack
+        proba = model.predict_proba(df)[0][1]
 
-    # Predict probabilities
-    proba = model.predict_proba(df)[0][1]   # probability of is_attack == 1
+        # Risk label
+        if proba < 0.3:
+            label = "normal"
+        elif proba < 0.6:
+            label = "medium_risk"
+        else:
+            label = "high_risk"
 
-    # Labeling
-    if proba < 0.3:
-        label = "normal"
-    elif proba < 0.6:
-        label = "medium_risk"
-    else:
-        label = "high_risk"
+        return {"ml_risk": float(proba), "ml_label": label}
 
-    return {
-        "ml_risk": float(proba),
-        "ml_label": label
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# -------- Run server --------
+
+# ---------- Run ----------
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
